@@ -15,8 +15,23 @@ from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 from engine import ConversationManager
 
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
+
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    except Exception:
+        pass
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    except Exception:
+        pass
+
 cm = ConversationManager()
 
 
