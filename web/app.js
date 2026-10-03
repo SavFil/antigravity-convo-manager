@@ -48,6 +48,8 @@
   const btnModalConfirm = document.getElementById("btn-modal-confirm");
   let onModalConfirm = null;
 
+  const btnSyncUi = document.getElementById("btn-sync-ui");
+  const btnClearUiCache = document.getElementById("btn-clear-ui-cache");
   const btnRefresh = document.getElementById("btn-refresh");
   const btnCleanOrphans = document.getElementById("btn-clean-orphans");
   const toast = document.getElementById("toast");
@@ -498,6 +500,50 @@
       showToast("Error cleaning orphans.", 4000);
     }
   });
+
+  // Sync with Antigravity UI
+  if (btnSyncUi) {
+    btnSyncUi.addEventListener("click", async () => {
+      btnSyncUi.disabled = true;
+      showToast("Syncing with Antigravity past conversations...");
+      try {
+        const res = await fetch("/api/sync-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "prune" })
+        });
+        const data = await res.json();
+        showToast(data.message || "Synced successfully! Reload window to apply.", 4500);
+      } catch (e) {
+        showToast("Error syncing with Antigravity.", 4000);
+      } finally {
+        btnSyncUi.disabled = false;
+      }
+    });
+  }
+
+  // Clear / Reset UI Dropdown Cache
+  if (btnClearUiCache) {
+    btnClearUiCache.addEventListener("click", () => {
+      openConfirmModal(
+        "Reset Antigravity Dropdown Cache?",
+        "This will clear the 23 stuck old August sessions from the Antigravity UI dropdown. Your real conversations and files on disk will NOT be touched. Continue?",
+        async () => {
+          try {
+            const res = await fetch("/api/sync-ui", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: "clear" })
+            });
+            const data = await res.json();
+            showToast("Antigravity dropdown reset! Reload window (Ctrl+Shift+P -> Reload Window) to apply.", 5000);
+          } catch (e) {
+            showToast("Failed to reset UI dropdown.", 4000);
+          }
+        }
+      );
+    });
+  }
 
   // Refresh
   btnRefresh.addEventListener("click", async () => {

@@ -122,6 +122,18 @@ body {
   text-decoration: none;
 }
 
+.btn-primary {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+.btn-primary:hover {
+  background: var(--accent-primary-hover);
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
 .btn-secondary {
   background: var(--bg-surface);
   color: var(--text-main);

@@ -123,6 +123,20 @@ TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "convo_sync_ui",
+        "description": "Synchronize and prune the Antigravity IDE UI past conversations dropdown (removes deleted or stuck sessions from state.vscdb).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["prune", "clear"],
+                    "description": "'prune' to remove deleted/dead sessions; 'clear' to completely reset the stuck dropdown list."
+                }
+            }
+        }
     }
 ]
 
@@ -222,6 +236,10 @@ def handle_tool_call(name: str, args: Dict[str, Any]) -> Any:
 
     elif name == "convo_clean_orphans":
         return cm.clean_orphaned_brains()
+
+    elif name == "convo_sync_ui":
+        mode = args.get("mode", "prune")
+        return cm.sync_antigravity_ui(mode=mode)
 
     else:
         raise ValueError(f"Unknown tool: {name}")

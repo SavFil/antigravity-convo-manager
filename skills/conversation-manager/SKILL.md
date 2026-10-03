@@ -37,6 +37,9 @@ When the `conversation-manager` plugin is active, the following MCP tools are av
 7. `convo_clean_orphans`:
    - Cleans orphaned brain directories that have no corresponding database.
 
+8. `convo_sync_ui`:
+   - Prunes deleted/dead conversations from the Antigravity UI dropdown cache in `state.vscdb`, or resets the stuck list (`mode='prune'` or `mode='clear'`).
+
 ## Standalone Web Dashboard
 
 Users can also launch the visual Web UI anytime by running:

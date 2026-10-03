@@ -143,6 +143,12 @@ class ConvoManagerHTTPHandler(SimpleHTTPRequestHandler):
             self._send_json(res)
             return
 
+        if path == "/api/sync-ui":
+            mode = payload.get("mode", "prune")
+            res = cm.sync_antigravity_ui(mode=mode)
+            self._send_json(res)
+            return
+
         if path == "/api/clean-orphans":
             res = cm.clean_orphaned_brains()
             self._send_json(res)

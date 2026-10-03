@@ -9,6 +9,7 @@ import re
 import glob
 import json
 import shutil
+import base64
 import sqlite3
 import datetime
 from pathlib import Path
@@ -396,12 +397,139 @@ class ConversationManager:
             except Exception as e:
                 errors.append(f"Failed deleting {cid}: {str(e)}")
 
+        # Automatically prune deleted conversations from Antigravity IDE UI state
+        pruned_from_ui = 0
+        if deleted:
+            pruned_from_ui, _ = self._prune_vscdb_entries(deleted)
+
         return {
             "deleted_count": len(deleted),
             "deleted_ids": deleted,
             "bytes_freed": bytes_freed,
             "mb_freed": round(bytes_freed / (1024 * 1024), 2),
+            "pruned_from_ui": pruned_from_ui,
             "errors": errors
+        }
+
+    def _decode_varint(self, data: bytes, offset: int) -> Tuple[int, int]:
+        res = 0
+        shift = 0
+        while True:
+            b = data[offset]
+            res |= (b & 0x7f) << shift
+            offset += 1
+            if not (b & 0x80):
+                break
+            shift += 7
+        return res, offset
+
+    def _encode_varint(self, n: int) -> bytes:
+        res = bytearray()
+        while True:
+            towrite = n & 0x7f
+            n >>= 7
+            if n:
+                res.append(towrite | 0x80)
+            else:
+                res.append(towrite)
+                break
+        return bytes(res)
+
+    def _prune_vscdb_entries(self, cids_to_remove: List[str] = None, mode: str = "prune") -> Tuple[int, int]:
+        """
+        Prunes specified cids and non-existent DBs from Antigravity's trajectorySummaries cache in state.vscdb.
+        If mode == 'clear', clears all cached trajectory summaries for a fresh clean slate.
+        """
+        if not self.state_db or not self.state_db.exists():
+            return 0, 0
+
+        cids_set = set(cids_to_remove or [])
+        try:
+            conn = sqlite3.connect(str(self.state_db), timeout=10.0)
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM ItemTable WHERE key='antigravityUnifiedStateSync.trajectorySummaries'")
+            row = cur.fetchone()
+            if not row or not row[0]:
+                conn.close()
+                return 0, 0
+
+            raw = base64.b64decode(row[0])
+            offset = 0
+            valid_items = []
+            dropped = []
+
+            if mode != "clear":
+                while offset < len(raw):
+                    tag, offset = self._decode_varint(raw, offset)
+                    length, offset = self._decode_varint(raw, offset)
+                    item_data = raw[offset:offset + length]
+                    offset += length
+
+                    # Parse cid from field 1
+                    o2 = 0
+                    cid = None
+                    while o2 < len(item_data):
+                        t2, o2 = self._decode_varint(item_data, o2)
+                        f2 = t2 >> 3
+                        if f2 == 1:
+                            l2, o2 = self._decode_varint(item_data, o2)
+                            cid = item_data[o2:o2 + l2].decode("ascii", errors="ignore")
+                            break
+                        else:
+                            w2 = t2 & 0x7
+                            if w2 == 2:
+                                l2, o2 = self._decode_varint(item_data, o2)
+                                o2 += l2
+                            else:
+                                break
+
+                    # Check if should drop
+                    should_drop = False
+                    if cid in cids_set:
+                        should_drop = True
+                    elif mode == "prune":
+                        db_file = self.convos_dir / f"{cid}.db"
+                        if not db_file.exists():
+                            should_drop = True
+
+                    if should_drop:
+                        dropped.append(cid)
+                    else:
+                        valid_items.append(item_data)
+
+            # Reconstruct protobuf
+            new_raw = bytearray()
+            for item in valid_items:
+                new_raw.append(0x0a)
+                new_raw.extend(self._encode_varint(len(item)))
+                new_raw.extend(item)
+
+            new_b64 = base64.b64encode(new_raw).decode("ascii")
+            cur.execute(
+                "UPDATE ItemTable SET value=? WHERE key='antigravityUnifiedStateSync.trajectorySummaries'",
+                (new_b64,)
+            )
+            conn.commit()
+            cur.execute("PRAGMA wal_checkpoint(FULL);")
+            conn.close()
+            return len(dropped), len(valid_items)
+        except Exception as e:
+            print(f"[convo-manager] _prune_vscdb_entries error: {e}")
+            return 0, 0
+
+    def sync_antigravity_ui(self, mode: str = "prune") -> Dict[str, Any]:
+        """
+        Synchronizes or resets the Antigravity UI past conversations dropdown in state.vscdb.
+        mode='prune': removes deleted/missing conversations from the UI dropdown.
+        mode='clear': completely empties the stuck dropdown cache so only fresh sessions appear.
+        """
+        pruned_count, remaining_count = self._prune_vscdb_entries(mode=mode)
+        return {
+            "status": "success",
+            "mode": mode,
+            "pruned_count": pruned_count,
+            "remaining_in_ui": remaining_count,
+            "message": f"Successfully synced past conversations ({pruned_count} pruned, {remaining_count} active). Reload Antigravity window to apply."
         }
 
     def clean_orphaned_brains(self) -> Dict[str, Any]:
@@ -427,3 +555,4 @@ class ConversationManager:
             "bytes_freed": bytes_freed,
             "mb_freed": round(bytes_freed / (1024 * 1024), 2)
         }
+
