@@ -48,10 +48,8 @@
   const btnModalConfirm = document.getElementById("btn-modal-confirm");
   let onModalConfirm = null;
 
-  const btnSyncUi = document.getElementById("btn-sync-ui");
-  const btnClearUiCache = document.getElementById("btn-clear-ui-cache");
-  const btnRefresh = document.getElementById("btn-refresh");
-  const btnCleanOrphans = document.getElementById("btn-clean-orphans");
+  const btnSyncAll = document.getElementById("btn-sync-all");
+  const btnSyncAllText = document.getElementById("btn-sync-all-text");
   const toast = document.getElementById("toast");
 
   // Show Toast
@@ -485,72 +483,30 @@
     showToast("Exporting conversation markdown...");
   }
 
-  // Clean Orphaned Brains
-  btnCleanOrphans.addEventListener("click", async () => {
-    try {
-      const res = await fetch("/api/clean-orphans", { method: "POST" });
-      const result = await res.json();
-      if (result.removed_count > 0) {
-        showToast(`Removed ${result.removed_count} orphaned brains. Freed ${result.mb_freed} MB.`);
-      } else {
-        showToast("No orphaned brains to clean.");
-      }
-      await loadStats();
-    } catch (e) {
-      showToast("Error cleaning orphans.", 4000);
-    }
-  });
+  // Unified All-in-One Master Sync & Clean
+  if (btnSyncAll) {
+    btnSyncAll.addEventListener("click", async () => {
+      btnSyncAll.disabled = true;
+      if (btnSyncAllText) btnSyncAllText.textContent = "Syncing & Cleaning...";
+      showToast("Running all-in-one sync & cleanup...", 3000);
 
-  // Sync with Antigravity UI
-  if (btnSyncUi) {
-    btnSyncUi.addEventListener("click", async () => {
-      btnSyncUi.disabled = true;
-      showToast("Syncing with Antigravity past conversations...");
       try {
-        const res = await fetch("/api/sync-ui", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "prune" })
-        });
+        const res = await fetch("/api/sync-all", { method: "POST" });
         const data = await res.json();
-        showToast(data.message || "Synced successfully! Reload window to apply.", 4500);
+        const msg = data.message || "All-in-one sync complete!";
+        showToast(msg, 5000);
+
+        // Instantly reload UI stats and list
+        await loadStats();
+        await loadConversations();
       } catch (e) {
-        showToast("Error syncing with Antigravity.", 4000);
+        showToast("Error during sync & cleanup: " + e.message, 4500);
       } finally {
-        btnSyncUi.disabled = false;
+        btnSyncAll.disabled = false;
+        if (btnSyncAllText) btnSyncAllText.textContent = "Sync & Clean All";
       }
     });
   }
-
-  // Clear / Reset UI Dropdown Cache
-  if (btnClearUiCache) {
-    btnClearUiCache.addEventListener("click", () => {
-      openConfirmModal(
-        "Reset Antigravity Dropdown Cache?",
-        "This will clear the 23 stuck old August sessions from the Antigravity UI dropdown. Your real conversations and files on disk will NOT be touched. Continue?",
-        async () => {
-          try {
-            const res = await fetch("/api/sync-ui", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ mode: "clear" })
-            });
-            const data = await res.json();
-            showToast("Antigravity dropdown reset! Reload window (Ctrl+Shift+P -> Reload Window) to apply.", 5000);
-          } catch (e) {
-            showToast("Failed to reset UI dropdown.", 4000);
-          }
-        }
-      );
-    });
-  }
-
-  // Refresh
-  btnRefresh.addEventListener("click", async () => {
-    showToast("Refreshing conversation index...");
-    await loadStats();
-    await loadConversations();
-  });
 
   // Search & Filter Events
   inputSearch.addEventListener("input", () => {

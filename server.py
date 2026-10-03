@@ -143,9 +143,14 @@ class ConvoManagerHTTPHandler(SimpleHTTPRequestHandler):
             self._send_json(res)
             return
 
+        if path == "/api/sync-all":
+            res = cm.sync_all()
+            self._send_json(res)
+            return
+
         if path == "/api/sync-ui":
             mode = payload.get("mode", "prune")
-            res = cm.sync_antigravity_ui(mode=mode)
+            res = cm.sync_all() if mode == "all" else cm.sync_antigravity_ui(mode=mode)
             self._send_json(res)
             return
 
