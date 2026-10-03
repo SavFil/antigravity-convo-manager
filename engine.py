@@ -540,10 +540,14 @@ class ConversationManager:
         ls_servers = []
 
         try:
-            wmic_out = subprocess.check_output(
-                ['wmic', 'process', 'where', "name like '%language_server%'", 'get', 'ProcessId,CommandLine', '/format:list'],
-                text=True, timeout=5
-            )
+            try:
+                proc_out = subprocess.check_output(
+                    ['wmic', 'process', 'where', "name like '%language_server%'", 'get', 'ProcessId,CommandLine', '/format:list'],
+                    text=True, timeout=5
+                )
+            except Exception:
+                ps_script = "(Get-CimInstance Win32_Process -Filter \"name like '%language_server%'\") | ForEach-Object { 'ProcessId=' + $_.ProcessId; 'CommandLine=' + $_.CommandLine }"
+                proc_out = subprocess.check_output(['powershell', '-NoProfile', '-Command', ps_script], text=True, timeout=8)
 
             net_cmd = 'Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in (Get-Process language_server_windows_x64 -ErrorAction SilentlyContinue).Id } | Select-Object LocalPort, OwningProcess'
             net_out = subprocess.check_output(['powershell', '-Command', net_cmd], text=True, timeout=5)
@@ -553,7 +557,7 @@ class ConversationManager:
                 if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                     ls_ports_by_pid.setdefault(int(parts[1]), []).append(int(parts[0]))
 
-            for block in wmic_out.split("CommandLine="):
+            for block in proc_out.split("CommandLine="):
                 if not block.strip():
                     continue
                 cmdline = block.split("ProcessId=")[0]
