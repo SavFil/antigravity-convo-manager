@@ -46,25 +46,23 @@ This tool resolves the problem completely by providing:
 ## 🚀 Quick Start
 
 ### 1. Launch the Visual Web Dashboard
-Double-click `launch-web-ui.bat` or run:
-```bash
-python server.py
-```
-This opens `http://127.0.0.1:48100` in your default browser. Zero dependencies required (uses standard Python 3).
+- **Windows:** Double-click `launch-web-ui.bat` or run `python server.py`
+- **macOS / Linux:** Run `./launch-web-ui.sh` or `python3 server.py`
+
+This opens `http://127.0.0.1:48100` in your default browser. Zero external dependencies required (uses standard Python 3.8+ on all operating systems).
 
 ### 2. Install as an Antigravity Plugin
-Run the one-click installer:
+Run the universal installer on any platform:
 ```bash
-# In Command Prompt or PowerShell:
-install-plugin.bat
+python install.py
+# or on macOS/Linux: python3 install.py (or ./install-plugin.sh)
+# or on Windows: double-click install-plugin.bat
 ```
-Or in PowerShell:
-```powershell
-.\install-plugin.ps1
-```
-This will:
-1. Register the `conversation-manager` MCP server in `~/.gemini/config/mcp_config.json`.
-2. Link the plugin folder to `~/.gemini/config/plugins/conversation-manager`.
+
+This will automatically:
+1. Detect your operating system (Windows, macOS, or Linux).
+2. Register the `conversation-manager` MCP server in `~/.gemini/config/mcp_config.json` with your machine's exact Python executable and path.
+3. Link the plugin folder to `~/.gemini/config/plugins/conversation-manager`.
 
 Once installed, restart or reopen Antigravity, and all tools and the skill will be active immediately.
 
@@ -83,6 +81,7 @@ When active in Antigravity, the following tools are available to agents:
 | `convo_export` | Exports a conversation to a Markdown file. |
 | `convo_delete` | Permanently deletes one or more conversations by UUID and reclaims disk space. |
 | `convo_clean_orphans` | Removes orphaned brain directories. |
+| `convo_sync_ui` | Prunes deleted/dead conversations from the Antigravity UI dropdown cache in `state.vscdb`, or resets the stuck list (`mode='prune'` or `mode='clear'`). |
 
 ---
 
@@ -93,10 +92,12 @@ convo-manager/
 ├── .gitignore
 ├── README.md
 ├── plugin.json                 # Antigravity Plugin manifest
-├── mcp_config.json             # MCP server declaration
+├── mcp_config.json             # Portable MCP server declaration
+├── install.py                  # Universal cross-platform installer (Win, Mac, Linux)
 ├── install-plugin.bat          # 1-click Windows installer
-├── install-plugin.ps1          # PowerShell installer
-├── launch-web-ui.bat           # Double-click launcher for the Web Dashboard
+├── install-plugin.sh           # macOS/Linux installer script
+├── launch-web-ui.bat           # 1-click Windows launcher
+├── launch-web-ui.sh            # macOS/Linux launcher script
 ├── server.py                   # Standalone Web GUI server & REST API (Python standard lib)
 ├── engine.py                   # Core conversation scanner, parser, exporter & cleaner
 ├── mcp_server.py               # JSON-RPC 2.0 MCP server for Antigravity agents

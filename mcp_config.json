@@ -3,7 +3,7 @@
     "conversation-manager": {
       "command": "python",
       "args": [
-        "C:\\Users\\filip\\.gemini\\antigravity-ide\\scratch\\convo-manager\\mcp_server.py"
+        "mcp_server.py"
       ]
     }
   }

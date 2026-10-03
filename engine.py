@@ -5,6 +5,7 @@ Works across Windows, macOS, and Linux by dynamically resolving user home paths.
 """
 
 import os
+import sys
 import re
 import ssl
 import glob
@@ -22,19 +23,48 @@ from typing import Dict, List, Optional, Any, Tuple
 
 
 def get_default_paths() -> Dict[str, str]:
-    """Dynamically determine default Antigravity data directories."""
+    """Dynamically determine default Antigravity data directories across Windows, macOS, and Linux."""
     user_home = Path.home()
-    app_data = Path(os.environ.get("APPDATA", user_home / "AppData" / "Roaming"))
     
+    # Candidate locations for state.vscdb across operating systems
+    state_candidates = []
+    
+    # 1. Windows AppData (Roaming)
+    if sys.platform == "win32" or os.environ.get("APPDATA"):
+        app_data = Path(os.environ.get("APPDATA", user_home / "AppData" / "Roaming"))
+        state_candidates.extend([
+            app_data / "Antigravity IDE" / "User" / "globalStorage" / "state.vscdb",
+            app_data / "Antigravity" / "User" / "globalStorage" / "state.vscdb",
+        ])
+    
+    # 2. macOS Library/Application Support
+    mac_app_support = user_home / "Library" / "Application Support"
+    state_candidates.extend([
+        mac_app_support / "Antigravity IDE" / "User" / "globalStorage" / "state.vscdb",
+        mac_app_support / "Antigravity" / "User" / "globalStorage" / "state.vscdb",
+    ])
+    
+    # 3. Linux ~/.config / XDG_CONFIG_HOME
+    xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", user_home / ".config"))
+    state_candidates.extend([
+        xdg_config / "Antigravity IDE" / "User" / "globalStorage" / "state.vscdb",
+        xdg_config / "Antigravity" / "User" / "globalStorage" / "state.vscdb",
+    ])
+    
+    state_db_path = ""
+    for cand in state_candidates:
+        if cand.exists():
+            state_db_path = str(cand)
+            break
+            
     gemini_base = user_home / ".gemini" / "antigravity-ide"
     convos_dir = gemini_base / "conversations"
     brain_dir = gemini_base / "brain"
-    state_db = app_data / "Antigravity IDE" / "User" / "globalStorage" / "state.vscdb"
     
     return {
         "convos_dir": str(convos_dir),
         "brain_dir": str(brain_dir),
-        "state_db": str(state_db) if state_db.exists() else "",
+        "state_db": state_db_path,
         "config_dir": str(user_home / ".gemini" / "config")
     }
 
@@ -534,51 +564,98 @@ class ConversationManager:
     def discover_active_antigravity_daemons(self) -> Tuple[List[Tuple[int, str]], List[Tuple[int, str]]]:
         """
         Discover running Antigravity Extension Servers (port, csrf) and Language Servers (port, csrf).
-        Works dynamically on Windows by inspecting running language server processes and listening ports.
+        Works dynamically across Windows, macOS, and Linux by inspecting running processes and listening ports.
         """
         ext_servers = []
         ls_servers = []
 
-        try:
+        if sys.platform == "win32":
             try:
-                proc_out = subprocess.check_output(
-                    ['wmic', 'process', 'where', "name like '%language_server%'", 'get', 'ProcessId,CommandLine', '/format:list'],
-                    text=True, timeout=5
-                )
+                try:
+                    proc_out = subprocess.check_output(
+                        ['wmic', 'process', 'where', "name like '%language_server%'", 'get', 'ProcessId,CommandLine', '/format:list'],
+                        text=True, timeout=5
+                    )
+                except Exception:
+                    ps_script = "(Get-CimInstance Win32_Process -Filter \"name like '%language_server%'\") | ForEach-Object { 'ProcessId=' + $_.ProcessId; 'CommandLine=' + $_.CommandLine }"
+                    proc_out = subprocess.check_output(['powershell', '-NoProfile', '-Command', ps_script], text=True, timeout=8)
+
+                net_cmd = 'Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in (Get-Process *language_server* -ErrorAction SilentlyContinue).Id } | Select-Object LocalPort, OwningProcess'
+                net_out = subprocess.check_output(['powershell', '-Command', net_cmd], text=True, timeout=5)
+                ls_ports_by_pid = {}
+                for line in net_out.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                        ls_ports_by_pid.setdefault(int(parts[1]), []).append(int(parts[0]))
+
+                for block in proc_out.split("CommandLine="):
+                    if not block.strip():
+                        continue
+                    cmdline = block.split("ProcessId=")[0]
+                    pid_match = re.search(r'ProcessId=(\d+)', block)
+                    pid = int(pid_match.group(1)) if pid_match else 0
+
+                    ext_port_m = re.search(r'--extension_server_port\s+(\d+)', cmdline)
+                    ext_csrf_m = re.search(r'--extension_server_csrf_token\s+([0-9a-f-]+)', cmdline)
+                    if ext_port_m and ext_csrf_m:
+                        ext_servers.append((int(ext_port_m.group(1)), ext_csrf_m.group(1)))
+
+                    ls_csrf_m = re.search(r'--csrf_token\s+([0-9a-f-]+)', cmdline)
+                    if ls_csrf_m and pid in ls_ports_by_pid:
+                        for p in ls_ports_by_pid[pid]:
+                            ls_servers.append((p, ls_csrf_m.group(1)))
             except Exception:
-                ps_script = "(Get-CimInstance Win32_Process -Filter \"name like '%language_server%'\") | ForEach-Object { 'ProcessId=' + $_.ProcessId; 'CommandLine=' + $_.CommandLine }"
-                proc_out = subprocess.check_output(['powershell', '-NoProfile', '-Command', ps_script], text=True, timeout=8)
+                pass
+        else:
+            # macOS and Linux POSIX daemon discovery
+            try:
+                ps_out = subprocess.check_output(["ps", "-eo", "pid,command"], text=True, timeout=5)
+                ls_pids = []
+                cmdlines_by_pid = {}
+                for line in ps_out.splitlines():
+                    if "language_server" in line:
+                        parts = line.strip().split(None, 1)
+                        if len(parts) == 2 and parts[0].isdigit():
+                            p_id = int(parts[0])
+                            ls_pids.append(p_id)
+                            cmdlines_by_pid[p_id] = parts[1]
 
-            net_cmd = 'Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in (Get-Process language_server_windows_x64 -ErrorAction SilentlyContinue).Id } | Select-Object LocalPort, OwningProcess'
-            net_out = subprocess.check_output(['powershell', '-Command', net_cmd], text=True, timeout=5)
-            ls_ports_by_pid = {}
-            for line in net_out.splitlines():
-                parts = line.strip().split()
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    ls_ports_by_pid.setdefault(int(parts[1]), []).append(int(parts[0]))
+                ls_ports_by_pid = {}
+                try:
+                    lsof_out = subprocess.check_output(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], text=True, timeout=5)
+                    for line in lsof_out.splitlines():
+                        for p_id in ls_pids:
+                            if f" {p_id} " in line or line.startswith(f"{p_id} "):
+                                m = re.search(r':(\d+)\s+\(LISTEN\)', line)
+                                if m:
+                                    ls_ports_by_pid.setdefault(p_id, []).append(int(m.group(1)))
+                except Exception:
+                    try:
+                        ss_out = subprocess.check_output(["ss", "-tlpn"], text=True, timeout=5)
+                        for line in ss_out.splitlines():
+                            for p_id in ls_pids:
+                                if f"pid={p_id}," in line:
+                                    m = re.search(r':(\d+)\s+', line)
+                                    if m:
+                                        ls_ports_by_pid.setdefault(p_id, []).append(int(m.group(1)))
+                    except Exception:
+                        pass
 
-            for block in proc_out.split("CommandLine="):
-                if not block.strip():
-                    continue
-                cmdline = block.split("ProcessId=")[0]
-                pid_match = re.search(r'ProcessId=(\d+)', block)
-                pid = int(pid_match.group(1)) if pid_match else 0
+                for p_id, cmdline in cmdlines_by_pid.items():
+                    ext_port_m = re.search(r'--extension_server_port\s+(\d+)', cmdline)
+                    ext_csrf_m = re.search(r'--extension_server_csrf_token\s+([0-9a-f-]+)', cmdline)
+                    if ext_port_m and ext_csrf_m:
+                        ext_servers.append((int(ext_port_m.group(1)), ext_csrf_m.group(1)))
 
-                ext_port_m = re.search(r'--extension_server_port\s+(\d+)', cmdline)
-                ext_csrf_m = re.search(r'--extension_server_csrf_token\s+([0-9a-f-]+)', cmdline)
-                if ext_port_m and ext_csrf_m:
-                    ext_servers.append((int(ext_port_m.group(1)), ext_csrf_m.group(1)))
+                    ls_csrf_m = re.search(r'--csrf_token\s+([0-9a-f-]+)', cmdline)
+                    if ls_csrf_m and p_id in ls_ports_by_pid:
+                        for p in ls_ports_by_pid[p_id]:
+                            ls_servers.append((p, ls_csrf_m.group(1)))
+            except Exception:
+                pass
 
-                ls_csrf_m = re.search(r'--csrf_token\s+([0-9a-f-]+)', cmdline)
-                if ls_csrf_m and pid in ls_ports_by_pid:
-                    for p in ls_ports_by_pid[pid]:
-                        ls_servers.append((p, ls_csrf_m.group(1)))
-
-            ext_servers = list(set(ext_servers))
-            ls_servers = list(set(ls_servers))
-        except Exception:
-            pass
-
+        ext_servers = list(set(ext_servers))
+        ls_servers = list(set(ls_servers))
         return ext_servers, ls_servers
 
     def purge_from_running_antigravity(self, cids: List[str]) -> Dict[str, int]:

@@ -1,5 +1,5 @@
 @echo off
-title Install Antigravity Conversation Manager Plugin
+setlocal
 cd /d "%~dp0"
-powershell -ExecutionPolicy Bypass -File "%~dp0install-plugin.ps1"
+python install.py
 pause
