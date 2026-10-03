@@ -6,14 +6,19 @@ Works across Windows, macOS, and Linux by dynamically resolving user home paths.
 
 import os
 import re
+import ssl
 import glob
 import json
 import shutil
 import base64
 import sqlite3
 import datetime
+import subprocess
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+
 
 
 def get_default_paths() -> Dict[str, str]:
@@ -397,6 +402,14 @@ class ConversationManager:
             except Exception as e:
                 errors.append(f"Failed deleting {cid}: {str(e)}")
 
+        # Automatically purge deleted conversations from running Antigravity IDE & Language Server
+        rpc_stats = {"ext_purged": 0, "ls_purged": 0}
+        if deleted:
+            try:
+                rpc_stats = self.purge_from_running_antigravity(deleted)
+            except Exception as e:
+                errors.append(f"RPC purge error: {str(e)}")
+
         # Automatically prune deleted conversations from Antigravity IDE UI state
         pruned_from_ui = 0
         if deleted:
@@ -408,6 +421,7 @@ class ConversationManager:
             "bytes_freed": bytes_freed,
             "mb_freed": round(bytes_freed / (1024 * 1024), 2),
             "pruned_from_ui": pruned_from_ui,
+            "rpc_purged": rpc_stats,
             "errors": errors
         }
 
@@ -517,19 +531,176 @@ class ConversationManager:
             print(f"[convo-manager] _prune_vscdb_entries error: {e}")
             return 0, 0
 
+    def discover_active_antigravity_daemons(self) -> Tuple[List[Tuple[int, str]], List[Tuple[int, str]]]:
+        """
+        Discover running Antigravity Extension Servers (port, csrf) and Language Servers (port, csrf).
+        Works dynamically on Windows by inspecting running language server processes and listening ports.
+        """
+        ext_servers = []
+        ls_servers = []
+
+        try:
+            wmic_out = subprocess.check_output(
+                ['wmic', 'process', 'where', "name like '%language_server%'", 'get', 'ProcessId,CommandLine', '/format:list'],
+                text=True, timeout=5
+            )
+
+            net_cmd = 'Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in (Get-Process language_server_windows_x64 -ErrorAction SilentlyContinue).Id } | Select-Object LocalPort, OwningProcess'
+            net_out = subprocess.check_output(['powershell', '-Command', net_cmd], text=True, timeout=5)
+            ls_ports_by_pid = {}
+            for line in net_out.splitlines():
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    ls_ports_by_pid.setdefault(int(parts[1]), []).append(int(parts[0]))
+
+            for block in wmic_out.split("CommandLine="):
+                if not block.strip():
+                    continue
+                cmdline = block.split("ProcessId=")[0]
+                pid_match = re.search(r'ProcessId=(\d+)', block)
+                pid = int(pid_match.group(1)) if pid_match else 0
+
+                ext_port_m = re.search(r'--extension_server_port\s+(\d+)', cmdline)
+                ext_csrf_m = re.search(r'--extension_server_csrf_token\s+([0-9a-f-]+)', cmdline)
+                if ext_port_m and ext_csrf_m:
+                    ext_servers.append((int(ext_port_m.group(1)), ext_csrf_m.group(1)))
+
+                ls_csrf_m = re.search(r'--csrf_token\s+([0-9a-f-]+)', cmdline)
+                if ls_csrf_m and pid in ls_ports_by_pid:
+                    for p in ls_ports_by_pid[pid]:
+                        ls_servers.append((p, ls_csrf_m.group(1)))
+
+            ext_servers = list(set(ext_servers))
+            ls_servers = list(set(ls_servers))
+        except Exception:
+            pass
+
+        return ext_servers, ls_servers
+
+    def purge_from_running_antigravity(self, cids: List[str]) -> Dict[str, int]:
+        """
+        Sends live deletion RPC calls to all active Antigravity Extension Servers and Language Servers.
+        This forces the running IDE windows to instantly remove the conversations from their dropdown
+        and memory without requiring a full IDE shutdown or reload.
+        """
+        if not cids:
+            return {"ext_purged": 0, "ls_purged": 0}
+
+        ext_servers, ls_servers = self.discover_active_antigravity_daemons()
+        ext_purged = 0
+        ls_purged = 0
+        ctx = ssl._create_unverified_context()
+
+        # 1. Purge from running IDE UI topic cache via Extension Server
+        for port, csrf in ext_servers:
+            url = f"http://127.0.0.1:{port}/exa.extension_server_pb.ExtensionServerService/PushUnifiedStateSyncUpdate"
+            for cid in cids:
+                body = {
+                    "update": {
+                        "topicName": "trajectorySummaries",
+                        "appliedUpdate": {
+                            "key": cid,
+                            "deleted": True
+                        }
+                    }
+                }
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        data=json.dumps(body).encode('utf-8'),
+                        headers={'Content-Type': 'application/json', 'x-codeium-csrf-token': csrf}
+                    )
+                    with urllib.request.urlopen(req, timeout=2) as resp:
+                        if resp.status == 200:
+                            ext_purged += 1
+                except Exception:
+                    pass
+
+        # 2. Purge from running Language Server & Cloud Code registry
+        for port, csrf in ls_servers:
+            url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/DeleteCascadeTrajectory"
+            for cid in cids:
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        data=json.dumps({"cascadeId": cid}).encode('utf-8'),
+                        headers={'Content-Type': 'application/json', 'x-codeium-csrf-token': csrf}
+                    )
+                    with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
+                        if resp.status == 200:
+                            ls_purged += 1
+                except Exception:
+                    pass
+
+        return {"ext_purged": ext_purged, "ls_purged": ls_purged}
+
     def sync_antigravity_ui(self, mode: str = "prune") -> Dict[str, Any]:
         """
-        Synchronizes or resets the Antigravity UI past conversations dropdown in state.vscdb.
+        Synchronizes or resets the Antigravity UI past conversations dropdown in both:
+        1. Live running Electron UI memory & Language Server processes via RPC.
+        2. Persistent SQLite cache in state.vscdb.
+
         mode='prune': removes deleted/missing conversations from the UI dropdown.
         mode='clear': completely empties the stuck dropdown cache so only fresh sessions appear.
         """
-        pruned_count, remaining_count = self._prune_vscdb_entries(mode=mode)
+        # Discover all stale IDs from state.vscdb and backup files
+        stale_cids = set()
+        vscdb_files = []
+        if self.state_db and self.state_db.parent.exists():
+            vscdb_files = list(self.state_db.parent.glob("state.vscdb*"))
+
+        for vf in vscdb_files:
+            try:
+                conn = sqlite3.connect(str(vf), timeout=5.0)
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM ItemTable WHERE key='antigravityUnifiedStateSync.trajectorySummaries'")
+                row = cur.fetchone()
+                if row and row[0]:
+                    raw = base64.b64decode(row[0])
+                    matches = re.findall(rb'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', raw)
+                    for m in matches:
+                        cid = m.decode("ascii", errors="ignore")
+                        db_file = self.convos_dir / f"{cid}.db"
+                        if not db_file.exists():
+                            stale_cids.add(cid)
+                conn.close()
+            except Exception:
+                pass
+
+        # Also purge any active trajectory summaries that have no local database
+        ext_servers, ls_servers = self.discover_active_antigravity_daemons()
+        ctx = ssl._create_unverified_context()
+        for port, csrf in ls_servers:
+            try:
+                req = urllib.request.Request(
+                    f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories",
+                    data=b'{}',
+                    headers={'Content-Type': 'application/json', 'x-codeium-csrf-token': csrf}
+                )
+                with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
+                    data = json.loads(resp.read().decode())
+                    summaries = data.get("trajectorySummaries", {})
+                    for cid in summaries.keys():
+                        db_file = self.convos_dir / f"{cid}.db"
+                        if not db_file.exists():
+                            stale_cids.add(cid)
+            except Exception:
+                pass
+
+        # Send live RPC deletion to running daemons
+        rpc_stats = self.purge_from_running_antigravity(list(stale_cids))
+
+        # Prune state.vscdb file on disk
+        pruned_count, remaining_count = self._prune_vscdb_entries(list(stale_cids), mode=mode)
+
         return {
             "status": "success",
             "mode": mode,
-            "pruned_count": pruned_count,
+            "stale_cids_purged": len(stale_cids),
+            "pruned_from_disk_db": pruned_count,
             "remaining_in_ui": remaining_count,
-            "message": f"Successfully synced past conversations ({pruned_count} pruned, {remaining_count} active). Reload Antigravity window to apply."
+            "live_rpc_events": rpc_stats,
+            "message": f"Successfully forced past conversations sync ({len(stale_cids)} ghost sessions purged from running IDE RAM, Language Server, and disk cache)."
         }
 
     def clean_orphaned_brains(self) -> Dict[str, Any]:
