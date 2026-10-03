@@ -1,0 +1,7 @@
+{
+  "name": "antigravity-conversation-manager",
+  "version": "1.0.0",
+  "description": "Finds all Antigravity conversations, gives human titles, dates, workspace tags, bulk deletion, transcript exports, and MCP tools.",
+  "author": "Antigravity Pair Programmer",
+  "entrypoint": "mcp_server.py"
+}

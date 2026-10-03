@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Convo Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">Antigravity Conversation Manager</h1>
+          <p class="brand-subtitle">Visual conversation explorer, bulk cleaner & transcript reader</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btn-refresh" class="btn btn-secondary" title="Refresh conversation index">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Refresh
+        </button>
+        <button id="btn-clean-orphans" class="btn btn-secondary" title="Remove orphaned brain folders">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Clean Orphans (<span id="orphan-count">0</span>)
+        </button>
+      </div>
+    </header>
+
+    <!-- Stats Banner -->
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Conversations</div>
+        <div class="stat-value" id="stat-total">--</div>
+        <div class="stat-hint">Across all projects</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Disk Storage Used</div>
+        <div class="stat-value text-accent" id="stat-size">--</div>
+        <div class="stat-hint" id="stat-size-detail">SQLite DBs + Brains</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Workspaces</div>
+        <div class="stat-value" id="stat-workspaces">--</div>
+        <div class="stat-hint" id="stat-latest">Latest: Loading...</div>
+      </div>
+    </section>
+
+    <!-- Control Bar -->
+    <section class="controls-card">
+      <div class="search-row">
+        <div class="search-input-wrap">
+          <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="input-search" placeholder="Search by title, prompt text, workspace, or conversation ID..." autocomplete="off">
+          <button id="btn-clear-search" class="btn-clear-input hidden" title="Clear search">&times;</button>
+        </div>
+        <div class="filter-controls">
+          <select id="select-workspace" class="custom-select">
+            <option value="">All Workspaces</option>
+          </select>
+          <select id="select-sort" class="custom-select">
+            <option value="mtime_desc">Newest First</option>
+            <option value="mtime_asc">Oldest First</option>
+            <option value="size_desc">Largest First</option>
+            <option value="steps_desc">Most Steps</option>
+            <option value="title_asc">Title A-Z</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Quick Selection Presets -->
+      <div class="presets-row">
+        <span class="presets-label">Quick Select:</span>
+        <button class="chip-btn" data-preset="all">Select All Visible</button>
+        <button class="chip-btn" data-preset="older-30">Older than 30 days</button>
+        <button class="chip-btn" data-preset="older-60">Older than 60 days</button>
+        <button class="chip-btn" data-preset="large-10">Larger than 10 MB</button>
+        <button class="chip-btn chip-clear" data-preset="clear">Deselect All</button>
+      </div>
+    </section>
+
+    <!-- Conversation List -->
+    <main class="list-container">
+      <div class="list-header">
+        <div class="list-header-left">
+          <input type="checkbox" id="checkbox-master" title="Select all currently visible items">
+          <span id="counter-showing">Loading conversations...</span>
+        </div>
+        <div class="list-header-right">
+          <span id="selected-summary" class="hidden">0 selected (0 MB)</span>
+        </div>
+      </div>
+
+      <div id="convo-list" class="convo-grid">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <div id="empty-state" class="empty-state hidden">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <h3>No conversations found</h3>
+        <p>Try clearing your search query or workspace filter.</p>
+      </div>
+    </main>
+
+    <!-- Floating Batch Action Bar -->
+    <aside id="batch-bar" class="batch-bar hidden">
+      <div class="batch-info">
+        <span class="batch-badge" id="batch-count">0</span>
+        <span>conversations selected</span>
+        <span class="batch-size" id="batch-size">0.00 MB</span>
+      </div>
+      <div class="batch-actions">
+        <button id="btn-batch-deselect" class="btn btn-secondary">Cancel</button>
+        <button id="btn-batch-delete" class="btn btn-danger">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Delete Selected
+        </button>
+      </div>
+    </aside>
+
+    <!-- Slide-Over Transcript Drawer -->
+    <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
+    <aside id="transcript-drawer" class="transcript-drawer hidden">
+      <div class="drawer-header">
+        <div class="drawer-meta">
+          <span class="workspace-tag" id="drawer-workspace">Workspace</span>
+          <span class="drawer-date" id="drawer-date">Date</span>
+          <h2 class="drawer-title" id="drawer-title">Conversation Title</h2>
+          <span class="drawer-id" id="drawer-id">UUID</span>
+        </div>
+        <div class="drawer-controls">
+          <button id="btn-export-md" class="btn btn-secondary" title="Download as Markdown">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Export MD
+          </button>
+          <button id="btn-delete-single" class="btn btn-danger" title="Delete this conversation">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            Delete
+          </button>
+          <button id="btn-close-drawer" class="btn-icon" title="Close drawer">&times;</button>
+        </div>
+      </div>
+      <div class="drawer-body" id="drawer-messages">
+        <!-- Rendered messages -->
+      </div>
+    </aside>
+
+    <!-- Confirmation Modal -->
+    <div id="modal-backdrop" class="modal-backdrop hidden">
+      <div class="confirm-modal">
+        <div class="modal-icon-danger">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </div>
+        <h3 class="modal-title" id="modal-title">Confirm Deletion</h3>
+        <p class="modal-message" id="modal-message">Are you sure you want to permanently delete these conversations? This action cannot be undone.</p>
+        <div class="modal-actions">
+          <button id="btn-modal-cancel" class="btn btn-secondary">Cancel</button>
+          <button id="btn-modal-confirm" class="btn btn-danger">Confirm Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
