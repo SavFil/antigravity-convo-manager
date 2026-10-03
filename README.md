@@ -4,6 +4,23 @@ A complete, standalone conversation manager and installable Antigravity plugin f
 
 ---
 
+## ⚡ Direct Download (No Setup Required)
+
+Want to run the tool immediately without downloading the whole repository or installing Python?
+
+| Platform | Download Link | Notes |
+| :--- | :--- | :--- |
+| **Windows (.exe)** | [⬇️ **Download AntigravityConvoManager.exe**](https://github.com/SavFil/antigravity-convo-manager/releases/latest/download/AntigravityConvoManager.exe) | Single portable executable (~10 MB). Just download & double-click! |
+| **Direct Mirror** | [🔗 **Raw Direct File Download**](https://github.com/SavFil/antigravity-convo-manager/raw/main/AntigravityConvoManager.exe) | Direct file link straight from repository `main`. |
+| **All Releases** | [📦 **View All Releases**](https://github.com/SavFil/antigravity-convo-manager/releases) | Release notes, changelog, and past builds. |
+
+### How to Run:
+1. Click the **[Download AntigravityConvoManager.exe](https://github.com/SavFil/antigravity-convo-manager/releases/latest/download/AntigravityConvoManager.exe)** link above.
+2. Double-click the downloaded file.
+3. Your default browser opens `http://127.0.0.1:48100` immediately with the visual dashboard ready.
+
+---
+
 ## 🔍 Why Does Antigravity "Lose" Past Conversations?
 
 If you opened the Antigravity chat switcher and noticed that **recent conversations disappeared** and only old sessions from a month ago showed up, you encountered an Antigravity internal state synchronization issue:
@@ -33,6 +50,7 @@ This tool resolves the problem completely by providing:
    - **One-Click Markdown Export**: Download or save any chat as clean, readable Markdown.
    - **Bulk Deletion & Space Reclaim**: Select multiple conversations (or use presets like "Older than 30 days" or "Larger than 10 MB") and delete them with one click.
    - **Clean Orphans**: Removes orphaned brain cache directories with no matching database.
+   - **Two-Way UI Sync**: One master button synchronizes active disk sessions with the Antigravity UI dropdown and cleans deleted ghost entries.
 
 2. **An Installable Antigravity Plugin & MCP Server**:
    - Integrates directly into Antigravity via the Model Context Protocol (MCP) and Antigravity Plugin System.
@@ -43,15 +61,22 @@ This tool resolves the problem completely by providing:
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Running from Source & Development
 
-### 1. Launch the Visual Web Dashboard
+### 1. Launch from Python Source
 - **Windows:** Double-click `launch-web-ui.bat` or run `python server.py`
 - **macOS / Linux:** Run `./launch-web-ui.sh` or `python3 server.py`
 
 This opens `http://127.0.0.1:48100` in your default browser. Zero external dependencies required (uses standard Python 3.8+ on all operating systems).
 
-### 2. Install as an Antigravity Plugin
+### 2. Build the Standalone Executable
+- **Windows:** Double-click `build-exe.bat` or run:
+  ```bash
+  pyinstaller AntigravityConvoManager.spec --distpath dist --noconfirm
+  ```
+  The resulting single-file `.exe` is saved in `dist/AntigravityConvoManager.exe`.
+
+### 3. Install as an Antigravity Plugin
 Run the universal installer on any platform:
 ```bash
 python install.py
@@ -89,8 +114,13 @@ When active in Antigravity, the following tools are available to agents:
 
 ```
 convo-manager/
+├── .github/
+│   └── workflows/
+│       └── release.yml         # Automated GitHub Actions release builder
 ├── .gitignore
 ├── README.md
+├── AntigravityConvoManager.spec # PyInstaller specification & icon configuration
+├── build-exe.bat               # 1-click Windows PyInstaller builder
 ├── plugin.json                 # Antigravity Plugin manifest
 ├── mcp_config.json             # Portable MCP server declaration
 ├── install.py                  # Universal cross-platform installer (Win, Mac, Linux)
@@ -109,3 +139,4 @@ convo-manager/
     ├── style.css               # Polished styling
     └── app.js                  # Frontend controller
 ```
+
