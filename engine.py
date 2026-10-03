@@ -703,40 +703,14 @@ class ConversationManager:
             "message": f"Successfully forced past conversations sync ({len(stale_cids)} ghost sessions purged from running IDE RAM, Language Server, and disk cache)."
         }
 
-    def _encode_string_field(self, fnum: int, s: str) -> bytes:
-        data = s.encode('utf-8')
-        tag = (fnum << 3) | 2
-        return self._encode_varint(tag) + self._encode_varint(len(data)) + data
-
-    def _encode_timestamp_field(self, fnum: int, seconds: int) -> bytes:
-        ts_data = self._encode_varint((1 << 3) | 0) + self._encode_varint(seconds)
-        tag = (fnum << 3) | 2
-        return self._encode_varint(tag) + self._encode_varint(len(ts_data)) + ts_data
-
-    def _encode_workspace_field(self, fnum: int, uri: str) -> bytes:
-        ws_data = self._encode_string_field(1, uri)
-        tag = (fnum << 3) | 2
-        return self._encode_varint(tag) + self._encode_varint(len(ws_data)) + ws_data
-
-    def _build_summary_proto(self, title: str, uri: str, timestamp_s: int) -> str:
-        """Constructs a valid base64 protobuf CascadeTrajectorySummary message."""
-        raw = bytearray()
-        raw.extend(self._encode_string_field(1, title))
-        raw.extend(self._encode_timestamp_field(3, timestamp_s))
-        raw.extend(self._encode_timestamp_field(6, timestamp_s))
-        raw.extend(self._encode_workspace_field(8, uri))
-        return base64.b64encode(bytes(raw)).decode('ascii')
-
     def sync_all(self) -> Dict[str, Any]:
         """
         Master all-in-one sync and cleanup operation:
         1. Clean orphaned brain directories.
         2. Purge ghost sessions (stale sessions with no local DB) from running IDE RAM & Language Server.
-        3. Inject all valid disk conversations into the running Antigravity IDE UI in real-time.
-        4. Persist all valid conversations cleanly into state.vscdb so they stay forever.
+        3. Safely load all valid disk conversations into the running Antigravity Language Servers via native LoadTrajectory RPC.
+        4. Clean state.vscdb cache safely.
         """
-        import time
-
         # 1. Clean orphaned brains
         orphans = self.clean_orphaned_brains()
 
@@ -787,75 +761,37 @@ class ConversationManager:
         if stale_cids:
             self.purge_from_running_antigravity(list(stale_cids))
 
-        # 3. Scan all valid disk conversations and inject them into running IDE UI
+        # 3. Load every valid conversation from disk into active Language Servers via native LoadTrajectory RPC
         convos = self.scan_conversations()
         synced_count = 0
-        valid_data_entries = []
-
         for c in convos:
             cid = c["id"]
-            title = c.get("title", "Conversation")
-            uri = c.get("workspace_uri") or "file:///c:/Users/filip/.gemini/antigravity-ide/scratch/thelobby"
-            dt = c.get("raw_updated_at")
-            ts = int(dt.timestamp()) if dt else int(time.time())
-            b64_val = self._build_summary_proto(title, uri, ts)
-
-            # Push live update to running Extension Servers
-            for port, csrf in ext_servers:
-                body = {
-                    "update": {
-                        "topicName": "trajectorySummaries",
-                        "appliedUpdate": {
-                            "key": cid,
-                            "newRow": {
-                                "value": b64_val
-                            }
-                        }
-                    }
-                }
+            for port, csrf in ls_servers:
                 try:
                     req = urllib.request.Request(
-                        f"http://127.0.0.1:{port}/exa.extension_server_pb.ExtensionServerService/PushUnifiedStateSyncUpdate",
-                        data=json.dumps(body).encode("utf-8"),
+                        f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/LoadTrajectory",
+                        data=json.dumps({"cascadeId": cid}).encode("utf-8"),
                         headers={"Content-Type": "application/json", "x-codeium-csrf-token": csrf}
                     )
-                    with urllib.request.urlopen(req, timeout=2) as r:
+                    with urllib.request.urlopen(req, context=ctx, timeout=3) as r:
                         if r.status == 200:
                             synced_count += 1
                 except Exception:
                     pass
 
-            # Prepare binary DataEntry for state.vscdb
-            row_bytes = self._encode_string_field(1, b64_val)
-            de_bytes = (
-                self._encode_string_field(1, cid)
-                + self._encode_varint((2 << 3) | 2)
-                + self._encode_varint(len(row_bytes))
-                + row_bytes
-            )
-            valid_data_entries.append(de_bytes)
-
-        # 4. Save into state.vscdb
+        # 4. Clean state.vscdb so it does not contain stale or corrupted entries
         if self.state_db and self.state_db.exists():
             try:
-                new_raw = bytearray()
-                for item in valid_data_entries:
-                    new_raw.append(0x0a)
-                    new_raw.extend(self._encode_varint(len(item)))
-                    new_raw.extend(item)
-
-                new_b64 = base64.b64encode(new_raw).decode("ascii")
-                conn = sqlite3.connect(str(self.state_db), timeout=10.0)
+                conn = sqlite3.connect(str(self.state_db), timeout=5.0)
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE ItemTable SET value=? WHERE key='antigravityUnifiedStateSync.trajectorySummaries'",
-                    (new_b64,)
+                    "UPDATE ItemTable SET value='' WHERE key='antigravityUnifiedStateSync.trajectorySummaries'"
                 )
                 conn.commit()
                 cur.execute("PRAGMA wal_checkpoint(FULL);")
                 conn.close()
             except Exception as e:
-                print(f"[convo-manager] sync_all state.vscdb error: {e}")
+                print(f"[convo-manager] sync_all state.vscdb cleanup error: {e}")
 
         return {
             "status": "success",
@@ -864,7 +800,7 @@ class ConversationManager:
             "ghosts_purged": len(stale_cids),
             "conversations_synced": len(convos),
             "conversations": [{"id": c["id"], "title": c["title"], "workspace": c["workspace"]} for c in convos],
-            "message": f"All-in-one sync complete! Synced {len(convos)} conversations to Antigravity, purged {len(stale_cids)} ghosts, and cleaned {orphans['removed_count']} orphans."
+            "message": f"Sync & Clean complete! Loaded {len(convos)} conversations into Antigravity, purged {len(stale_cids)} ghosts, and cleaned {orphans['removed_count']} orphans."
         }
 
     def clean_orphaned_brains(self) -> Dict[str, Any]:
